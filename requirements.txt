@@ -1,0 +1,11 @@
+# SchemaCraft AI runtime dependencies
+streamlit>=1.50
+openai>=1.40             # strict json_schema structured outputs
+anthropic>=0.49     # structured outputs via output_config
+pydantic[email]>=2.7      # EmailStr in generated models needs email-validator
+jsonschema[format-nongpl]>=4.21   # format checks for date-time, uri, etc.
+pandas>=2.0
+python-dotenv>=1.0
+
+# Development
+pytest>=8.0
