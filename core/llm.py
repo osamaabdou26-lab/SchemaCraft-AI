@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Protocol
 
 from .config import PROVIDERS, ModelSpec, ProviderSpec
@@ -152,7 +153,10 @@ class OpenAIClient:
         except openai.PermissionDeniedError as exc:
             raise LLMError(f"{label} denied access to model '{self._model.id}' (403).") from exc
         except openai.NotFoundError as exc:
-            raise LLMError(f"{label} model '{self._model.id}' was not found (404).") from exc
+            hint = " Pick another model in the sidebar." if self._provider.discover_models else ""
+            raise LLMError(
+                f"{label} model '{self._model.id}' was not found or is not available to your key (404).{hint}"
+            ) from exc
         except openai.RateLimitError as exc:
             # OpenAI uses 429 both for "no credit" and for real rate limiting.
             if getattr(exc, "code", None) == "insufficient_quota":
@@ -282,6 +286,68 @@ class AnthropicClient:
         return _parse_json_payload(text, "Anthropic")
 
 
+# Model families that cannot do chat + JSON output (embeddings, media, speech...).
+_NON_CHAT_MARKERS = (
+    "embedding", "image", "imagen", "veo", "tts", "audio", "live", "aqa",
+    "learnlm", "robotics", "computer-use", "native", "vision",
+)
+_MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9.\-]*$")
+
+
+def _model_sort_key(model_id: str) -> tuple:
+    """Newest Flash models first, then Flash-Lite, then everything else."""
+    match = re.search(r"gemini-(\d+)(?:\.(\d+))?", model_id)
+    version = (int(match.group(1)), int(match.group(2) or 0)) if match else (0, 0)
+    is_alias = model_id.endswith("-latest")
+    unstable = any(tag in model_id for tag in ("preview", "exp"))
+    return (
+        "flash" not in model_id,
+        "lite" in model_id,
+        not is_alias,
+        unstable,
+        (-version[0], -version[1]),
+        model_id,
+    )
+
+
+def filter_chat_models(model_ids: list[str]) -> list[str]:
+    """Keep Gemini chat models from a raw model listing, best choices first."""
+    cleaned = {m.removeprefix("models/") for m in model_ids}
+    usable = [
+        m for m in cleaned
+        if m.startswith("gemini-") and _MODEL_ID_RE.match(m)
+        and not any(marker in m for marker in _NON_CHAT_MARKERS)
+    ]
+    return sorted(usable, key=_model_sort_key)
+
+
+def list_available_models(provider_name: str, api_key_override: str | None = None) -> list[str]:
+    """Return the chat model IDs the key can use (for providers with discover_models)."""
+    provider = PROVIDERS.get(provider_name)
+    if provider is None:
+        raise LLMError(f"Unknown provider '{provider_name}'.")
+    if not provider.discover_models:
+        return [m.id for m in provider.models]
+
+    api_key = resolve_api_key(provider, api_key_override)
+    import openai
+
+    client = openai.OpenAI(api_key=api_key, base_url=provider.base_url, timeout=20.0, max_retries=1)
+    try:
+        ids = [m.id for m in client.models.list()]
+    except openai.BadRequestError as exc:
+        if "api key" in str(exc).lower():
+            raise LLMError(f"{provider.name} rejected the API key. Check it and try again.") from exc
+        raise LLMError(f"Could not list {provider.name} models: {exc.message}") from exc
+    except openai.APIError as exc:
+        raise LLMError(f"Could not list {provider.name} models: {exc}") from exc
+
+    models = filter_chat_models(ids)
+    if not models:
+        raise LLMError(f"{provider.name} returned no usable chat models for this key.")
+    return models
+
+
 def build_client(
     provider_name: str,
     model_id: str,
@@ -293,6 +359,8 @@ def build_client(
     if provider is None:
         raise LLMError(f"Unknown provider '{provider_name}'.")
     model = next((m for m in provider.models if m.id == model_id), None)
+    if model is None and provider.discover_models and _MODEL_ID_RE.match(model_id or ""):
+        model = ModelSpec(model_id, model_id)  # a model discovered from the provider's listing
     if model is None:
         raise LLMError(f"Unknown model '{model_id}' for {provider_name}.")
 

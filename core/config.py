@@ -30,6 +30,8 @@ class ProviderSpec:
     # Where to create a key; shown in the sidebar.
     key_url: str = ""
     free_tier: bool = False
+    # Ask the provider which models the key can use instead of trusting the static list.
+    discover_models: bool = False
 
 
 OPENAI = ProviderSpec(
@@ -54,17 +56,20 @@ ANTHROPIC = ProviderSpec(
 )
 
 # Google's free tier needs no credit card. It is reached through its
-# OpenAI-compatible endpoint, so it reuses the OpenAI SDK.
+# OpenAI-compatible endpoint, so it reuses the OpenAI SDK. Google retires and
+# gates model versions often, so the real list is fetched with the user's key;
+# these "latest" aliases are only the fallback when that lookup fails.
 GEMINI = ProviderSpec(
     name="Google Gemini",
     env_var="GEMINI_API_KEY",
     models=(
-        ModelSpec("gemini-2.5-flash", "Gemini 2.5 Flash"),
-        ModelSpec("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite"),
+        ModelSpec("gemini-flash-latest", "Gemini Flash (latest)"),
+        ModelSpec("gemini-flash-lite-latest", "Gemini Flash-Lite (latest)"),
     ),
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
     key_url="https://aistudio.google.com/apikey",
     free_tier=True,
+    discover_models=True,
 )
 
 PROVIDERS: dict[str, ProviderSpec] = {p.name: p for p in (OPENAI, ANTHROPIC, GEMINI)}

@@ -43,7 +43,7 @@ Instead of using `.env`, you can export the keys in your shell or paste one into
 |-----------|--------------------------------------------------------|-------------|
 | OpenAI    | `gpt-4o`, `gpt-4o-mini`                                | yes         |
 | Anthropic | `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5` | Haiku only¹ |
-| Google Gemini (**free tier**) | `gemini-2.5-flash`, `gemini-2.5-flash-lite` | yes |
+| Google Gemini (**free tier**) | fetched live with your key (fallback: `gemini-flash-latest`, `gemini-flash-lite-latest`) | yes |
 
 **No budget?** Use Google Gemini. Create a free key (no credit card) at https://aistudio.google.com/apikey, set `GEMINI_API_KEY` or paste it in the sidebar, and select **Google Gemini**. OpenAI and Anthropic both need paid API credit.
 

@@ -23,8 +23,9 @@ from core.config import (
     MAX_RETRIES_LIMIT,
     MIN_RECORDS,
     PROVIDERS,
+    ModelSpec,
 )
-from core.llm import LLMError, MissingAPIKeyError, build_client
+from core.llm import LLMError, MissingAPIKeyError, build_client, list_available_models
 from core.pipeline import GenerationResult, InvalidPromptError, PipelineError, SchemaCraftPipeline
 from core.presets import PRESETS
 
@@ -62,6 +63,12 @@ st.session_state.setdefault("description", "")
 st.session_state.setdefault("result", None)
 
 
+@st.cache_data(ttl=3600, show_spinner="Loading available models…")
+def fetch_models(provider_name: str, api_key_override: str | None) -> list[str]:
+    """Model IDs the key can use, cached for an hour to avoid a lookup on every rerun."""
+    return list_available_models(provider_name, api_key_override)
+
+
 def apply_preset(text: str) -> None:
     """Button callback: load a preset into the text area before it is rendered."""
     st.session_state["description"] = text
@@ -80,10 +87,38 @@ with st.sidebar:
         format_func=lambda name: f"{name}  (free tier)" if PROVIDERS[name].free_tier else name,
     )
     provider = PROVIDERS[provider_name]
+
+    # The key comes before the model list: some providers list models per key.
+    env_key_present = bool(os.environ.get(provider.env_var, "").strip())
+    if env_key_present:
+        st.success(f"🔑 `{provider.env_var}` found in environment.")
+        api_key_override = None
+    else:
+        api_key_override = st.text_input(
+            f"🔑 {provider.name} API key",
+            type="password",
+            key=f"api_key_{provider.name}",  # one field per provider, so keys are never mixed up
+            help="Used only in memory for this browser session; never written to disk.",
+        )
+        if not api_key_override:
+            st.warning(f"`{provider.env_var}` is not set. Paste a key above.")
+    if provider.key_url:
+        cost = "free, no credit card" if provider.free_tier else "paid API credit required"
+        st.caption(f"Get a key: [{provider.key_url}]({provider.key_url}) ({cost}).")
+
+    model_options = list(provider.models)
+    if provider.discover_models and (env_key_present or api_key_override):
+        try:
+            discovered = fetch_models(provider.name, api_key_override)
+            static = {m.id: m for m in provider.models}
+            model_options = [static.get(mid, ModelSpec(mid, mid)) for mid in discovered]
+        except LLMError as exc:
+            st.caption(f"⚠️ {exc} Showing default models.")
+
     model = st.selectbox(
         "Model",
-        provider.models,
-        format_func=lambda m: f"{m.label}  ·  {m.id}",
+        model_options,
+        format_func=lambda m: m.id if m.label == m.id else f"{m.label}  ·  {m.id}",
     )
 
     temperature = st.slider(
@@ -106,24 +141,6 @@ with st.sidebar:
         DEFAULT_MAX_RETRIES,
         help="Extra attempts per stage when validation fails; errors are fed back to the model.",
     )
-
-    st.divider()
-    st.subheader("🔑 API key")
-    env_key_present = bool(os.environ.get(provider.env_var, "").strip())
-    if env_key_present:
-        st.success(f"`{provider.env_var}` found in environment.")
-        api_key_override = None
-    else:
-        st.warning(f"`{provider.env_var}` is not set.")
-        api_key_override = st.text_input(
-            "Paste a key for this session",
-            type="password",
-            key=f"api_key_{provider.name}",  # one field per provider, so keys are never mixed up
-            help="Used only in memory for this browser session; never written to disk.",
-        )
-    if provider.key_url:
-        cost = "free, no credit card" if provider.free_tier else "paid API credit required"
-        st.caption(f"Get a {provider.name} key: [{provider.key_url}]({provider.key_url}) ({cost}).")
 
 # --------------------------------------------------------------------------- #
 # Main: input

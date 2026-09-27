@@ -168,7 +168,7 @@ def test_openai_429_quota_vs_rate_limit(code, match):
 def test_gemini_uses_compatible_endpoint_and_max_tokens():
     from core.config import GEMINI
 
-    client = build_client("Google Gemini", "gemini-2.5-flash", 0.2, "AIzaTestKey")
+    client = build_client("Google Gemini", "gemini-flash-latest", 0.2, "AIzaTestKey")
     assert isinstance(client, OpenAIClient)
     assert str(client._client.base_url).startswith(GEMINI.base_url.rstrip("/"))
     captured = {}
@@ -191,7 +191,7 @@ def _bad_request(message):
 
 
 def test_gemini_falls_back_to_json_mode_when_schema_rejected():
-    client = build_client("Google Gemini", "gemini-2.5-flash", 0.2, "AIzaTestKey")
+    client = build_client("Google Gemini", "gemini-flash-latest", 0.2, "AIzaTestKey")
     calls = []
 
     def create(**kwargs):
@@ -207,7 +207,7 @@ def test_gemini_falls_back_to_json_mode_when_schema_rejected():
 
 
 def test_gemini_invalid_key_400_mapped():
-    client = build_client("Google Gemini", "gemini-2.5-flash", 0.2, "AIzaTestKey")
+    client = build_client("Google Gemini", "gemini-flash-latest", 0.2, "AIzaTestKey")
 
     def create(**_):
         raise _bad_request("API key not valid. Please pass a valid API key.")
@@ -219,8 +219,65 @@ def test_gemini_invalid_key_400_mapped():
 
 @pytest.mark.parametrize(
     "provider, model, key",
-    [("OpenAI", "gpt-4o", "AIzaTestKey"), ("Google Gemini", "gemini-2.5-flash", "sk-proj-abc")],
+    [("OpenAI", "gpt-4o", "AIzaTestKey"), ("Google Gemini", "gemini-flash-latest", "sk-proj-abc")],
 )
 def test_gemini_key_mismatch(provider, model, key):
     with pytest.raises(LLMError, match="Gemini"):
         build_client(provider, model, 0.2, key)
+
+
+def test_filter_chat_models_orders_and_drops_non_chat():
+    from core.llm import filter_chat_models
+
+    raw = [
+        "models/gemini-2.5-flash", "models/gemini-3.5-flash", "models/gemini-3.1-flash-lite",
+        "models/gemini-flash-latest", "models/gemini-3-pro-preview", "models/text-embedding-004",
+        "models/gemini-embedding-001", "models/gemini-2.5-flash-preview-tts", "models/imagen-4.0",
+        "models/gemini-3.5-flash-image", "models/gemma-4-27b-it",
+    ]
+    assert filter_chat_models(raw) == [
+        "gemini-flash-latest", "gemini-3.5-flash", "gemini-2.5-flash",
+        "gemini-3.1-flash-lite", "gemini-3-pro-preview",
+    ]
+
+
+class _FakeOpenAI:
+    def __init__(self, ids=None, error=None, **_):
+        self._ids, self._error = ids, error
+        self.models = SimpleNamespace(list=self._list)
+
+    def _list(self):
+        if self._error:
+            raise self._error
+        return [SimpleNamespace(id=i) for i in self._ids]
+
+
+def test_list_available_models_uses_key(monkeypatch):
+    import openai
+
+    from core.llm import list_available_models
+
+    monkeypatch.setattr(openai, "OpenAI", lambda **kw: _FakeOpenAI(ids=["models/gemini-3.5-flash"], **kw))
+    assert list_available_models("Google Gemini", "AIzaTestKey") == ["gemini-3.5-flash"]
+    # Static providers are returned without any network call.
+    assert list_available_models("OpenAI", "sk-proj-x") == ["gpt-4o", "gpt-4o-mini"]
+
+
+def test_list_available_models_bad_key(monkeypatch):
+    import openai
+
+    from core.llm import list_available_models
+
+    error = _bad_request("API key not valid. Please pass a valid API key.")
+    monkeypatch.setattr(openai, "OpenAI", lambda **kw: _FakeOpenAI(error=error, **kw))
+    with pytest.raises(LLMError, match="rejected the API key"):
+        list_available_models("Google Gemini", "AIzaTestKey")
+
+
+def test_discovered_gemini_model_accepted_but_junk_rejected():
+    client = build_client("Google Gemini", "gemini-3.5-flash", 0.2, "AIzaTestKey")
+    assert client._model.id == "gemini-3.5-flash"
+    with pytest.raises(LLMError, match="Unknown model"):
+        build_client("Google Gemini", "../../etc", 0.2, "AIzaTestKey")
+    with pytest.raises(LLMError, match="Unknown model"):
+        build_client("OpenAI", "gemini-3.5-flash", 0.2, "sk-proj-x")
