@@ -20,7 +20,7 @@ from typing import Any, Callable
 
 from . import prompts
 from .config import MAX_FEEDBACK_ERRORS, MAX_PROMPT_CHARS, MAX_RECORDS, MIN_PROMPT_CHARS, MIN_RECORDS
-from .llm import LLMClient, Message
+from .llm import LLMClient, LLMError, Message
 from .validation import (
     load_models,
     schema_warnings,
@@ -237,13 +237,22 @@ class SchemaCraftPipeline:
         schema = self.generate_schema(description)
         result = GenerationResult(schema=schema, schema_warnings=schema_warnings(schema))
 
-        code, root, loaded, model_errors = self.generate_models(schema)
-        result.pydantic_code, result.root_model, result.model_errors = code, root, model_errors
+        # A provider failure in a later stage must not throw away the finished schema:
+        # record it on that stage and keep going, so the user still gets partial output.
+        loaded = None
+        try:
+            code, root, loaded, model_errors = self.generate_models(schema)
+            result.pydantic_code, result.root_model, result.model_errors = code, root, model_errors
+        except LLMError as exc:
+            result.model_errors = [str(exc)]
 
-        result.records, result.data_errors = self.generate_records(schema, record_count)
+        try:
+            result.records, result.data_errors = self.generate_records(schema, record_count)
+        except LLMError as exc:
+            result.data_errors = [str(exc)]
 
         # Cross-check: the data that passed jsonschema should also parse through the models.
-        if result.data_ok and loaded is not None and loaded.ok:
+        if result.data_ok and loaded is not None and loaded.ok and result.root_model in loaded.models:
             self._progress("Cross-checking mock data with the Pydantic models…")
             result.model_crosscheck_errors = validate_records_with_model(loaded.models[root], result.records)
 

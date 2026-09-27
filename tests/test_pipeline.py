@@ -97,3 +97,20 @@ def test_persistent_data_and_model_errors_degrade_gracefully(fake_llm_factory):
     assert not result.models_ok and any("import of 'os'" in e for e in result.model_errors)
     assert not result.data_ok and any("Expected exactly 2" in e for e in result.data_errors)
     assert result.schema == GOOD_SCHEMA
+
+
+def test_provider_failure_after_schema_keeps_partial_result():
+    from core.llm import ProviderOverloadedError
+
+    class FlakyLLM:
+        def complete_json(self, system, messages, output_schema, schema_name):
+            if schema_name == "json_schema_result":
+                return schema_envelope(GOOD_SCHEMA)
+            if schema_name == "pydantic_models_result":
+                raise ProviderOverloadedError("Google Gemini is overloaded right now (503).")
+            return data_envelope(GOOD_RECORDS)
+
+    result = SchemaCraftPipeline(FlakyLLM()).run(DESCRIPTION, 2)
+    assert result.schema == GOOD_SCHEMA
+    assert not result.models_ok and "503" in result.model_errors[0]
+    assert result.data_ok and result.model_crosscheck_errors == []

@@ -14,8 +14,10 @@ schema, so callers never have to strip markdown fences or prose.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import time
 from typing import Any, Protocol
 
 from .config import PROVIDERS, ModelSpec, ProviderSpec
@@ -24,6 +26,12 @@ from .config import PROVIDERS, ModelSpec, ProviderSpec
 # while leaving room for large schemas and 10 mock records.
 MAX_OUTPUT_TOKENS = 16000
 REQUEST_TIMEOUT_S = 180.0
+
+# Extra waits (seconds) when a provider is overloaded (5xx), on top of the SDK's own
+# quick retry. Free tiers in particular return 503 "high demand" in short bursts.
+OVERLOAD_BACKOFF_S = (5.0, 15.0)
+
+log = logging.getLogger(__name__)
 
 # Anthropic server-side refusal fallback (routes a declined request to another model).
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"
@@ -37,6 +45,18 @@ class LLMError(Exception):
 
 class MissingAPIKeyError(LLMError):
     """No API key is configured for the selected provider."""
+
+
+class ProviderOverloadedError(LLMError):
+    """The provider is temporarily unavailable (5xx); retrying later usually works."""
+
+
+def _overloaded(label: str, status: int, compat: bool) -> ProviderOverloadedError:
+    hint = " or pick another model (e.g. a Flash-Lite model)" if compat else " or pick another model"
+    return ProviderOverloadedError(
+        f"{label} is overloaded or unavailable right now ({status}). This is temporary: "
+        f"wait a minute and click Generate again{hint}."
+    )
 
 
 class LLMClient(Protocol):
@@ -116,8 +136,9 @@ class OpenAIClient:
         self._provider = provider or PROVIDERS["OpenAI"]
         self._label = self._provider.name
         self._compat = self._provider.base_url is not None
+        self._sleep = time.sleep  # replaced in tests
         self._client = openai.OpenAI(
-            api_key=api_key, base_url=self._provider.base_url, timeout=REQUEST_TIMEOUT_S, max_retries=2
+            api_key=api_key, base_url=self._provider.base_url, timeout=REQUEST_TIMEOUT_S, max_retries=1
         )
 
     def _request(self, system, messages, output_schema, schema_name, strict_schema: bool) -> dict[str, Any]:
@@ -145,6 +166,17 @@ class OpenAIClient:
         return request
 
     def _call(self, request: dict[str, Any]):
+        """Send the request, waiting and retrying while the provider is overloaded."""
+        for delay in (*OVERLOAD_BACKOFF_S, None):
+            try:
+                return self._call_once(request)
+            except ProviderOverloadedError:
+                if delay is None:
+                    raise
+                log.info("%s overloaded; retrying in %.0fs", self._label, delay)
+                self._sleep(delay)
+
+    def _call_once(self, request: dict[str, Any]):
         openai, label = self._openai, self._label
         try:
             return self._client.chat.completions.create(**request)
@@ -185,6 +217,8 @@ class OpenAIClient:
         except openai.APIConnectionError as exc:
             raise LLMError(f"Could not reach the {label} API. Check your network connection.") from exc
         except openai.APIStatusError as exc:
+            if exc.status_code >= 500:
+                raise _overloaded(label, exc.status_code, self._compat) from exc
             raise LLMError(f"{label} API error ({exc.status_code}): {exc.message}") from exc
 
     def complete_json(self, system, messages, output_schema, schema_name):
@@ -276,6 +310,9 @@ class AnthropicClient:
         except anthropic.APIConnectionError as exc:
             raise LLMError("Could not reach the Anthropic API. Check your network connection.") from exc
         except anthropic.APIStatusError as exc:
+            # 5xx and 529 "overloaded" were already retried by the SDK.
+            if exc.status_code >= 500:
+                raise _overloaded("Anthropic", exc.status_code, compat=False) from exc
             raise LLMError(f"Anthropic API error ({exc.status_code}): {exc.message}") from exc
 
         if response.stop_reason == "refusal":

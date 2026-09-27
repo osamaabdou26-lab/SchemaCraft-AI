@@ -281,3 +281,41 @@ def test_discovered_gemini_model_accepted_but_junk_rejected():
         build_client("Google Gemini", "../../etc", 0.2, "AIzaTestKey")
     with pytest.raises(LLMError, match="Unknown model"):
         build_client("OpenAI", "gemini-3.5-flash", 0.2, "sk-proj-x")
+
+
+def _server_error(status, message="This model is currently experiencing high demand."):
+    import httpx2
+    import openai
+
+    request = httpx2.Request("POST", "https://example.test/chat/completions")
+    return openai.InternalServerError(message, response=httpx2.Response(status, request=request), body=None)
+
+
+def test_overloaded_provider_is_retried_then_succeeds():
+    client = build_client("Google Gemini", "gemini-flash-latest", 0.2, "AIzaTestKey")
+    sleeps, calls = [], []
+    client._sleep = sleeps.append
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        if len(calls) < 3:
+            raise _server_error(503)
+        return _openai_response('{"a": "x"}')
+
+    client._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    assert client.complete_json("sys", MESSAGES, ENVELOPE, "env") == {"a": "x"}
+    assert sleeps == [5.0, 15.0]
+
+
+def test_overloaded_provider_gives_up_with_clear_message():
+    from core.llm import ProviderOverloadedError
+
+    client = build_client("Google Gemini", "gemini-flash-latest", 0.2, "AIzaTestKey")
+    client._sleep = lambda _s: None
+
+    def create(**_):
+        raise _server_error(503)
+
+    client._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    with pytest.raises(ProviderOverloadedError, match="overloaded.*temporary.*Flash-Lite"):
+        client.complete_json("sys", MESSAGES, ENVELOPE, "env")

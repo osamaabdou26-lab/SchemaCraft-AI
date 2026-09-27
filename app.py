@@ -295,6 +295,12 @@ if result is not None:
     m3.metric("Mock data", f"{len(result.records)} valid" if result.data_ok else "Errors")
     m4.metric("LLM calls", len(result.attempts))
 
+    if not (result.models_ok and result.data_ok):
+        st.info(
+            "The JSON Schema is ready, but some later steps did not finish cleanly. "
+            "Check the tabs below for details, then click Generate again to retry."
+        )
+
     tab_schema, tab_models, tab_data = st.tabs(["📐 JSON Schema", "🐍 Pydantic v2 Code", "🧪 Mock Data"])
     with tab_schema:
         render_schema_tab(result)
