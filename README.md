@@ -31,7 +31,7 @@ python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-cp .env.example .env               # then add OPENAI_API_KEY and/or ANTHROPIC_API_KEY
+cp .env.example .env               # then add OPENAI_API_KEY, ANTHROPIC_API_KEY and/or GEMINI_API_KEY
 streamlit run app.py               # opens http://localhost:8501
 ```
 
@@ -43,6 +43,9 @@ Instead of using `.env`, you can export the keys in your shell or paste one into
 |-----------|--------------------------------------------------------|-------------|
 | OpenAI    | `gpt-4o`, `gpt-4o-mini`                                | yes         |
 | Anthropic | `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5` | Haiku only¹ |
+| Google Gemini (**free tier**) | `gemini-2.5-flash`, `gemini-2.5-flash-lite` | yes |
+
+**No budget?** Use Google Gemini. Create a free key (no credit card) at https://aistudio.google.com/apikey, set `GEMINI_API_KEY` or paste it in the sidebar, and select **Google Gemini**. OpenAI and Anthropic both need paid API credit.
 
 ¹ Current Claude Opus/Sonnet models reject sampling parameters, so the slider is disabled for them. `claude-opus-5` also opts in to Anthropic's server-side refusal fallback (`fallbacks: "default"`). Add or remove models in `core/config.py`.
 

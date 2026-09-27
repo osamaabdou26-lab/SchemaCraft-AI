@@ -25,6 +25,11 @@ class ProviderSpec:
     name: str
     env_var: str
     models: tuple[ModelSpec, ...]
+    # Set for providers reached through the OpenAI SDK at a different address.
+    base_url: str | None = None
+    # Where to create a key; shown in the sidebar.
+    key_url: str = ""
+    free_tier: bool = False
 
 
 OPENAI = ProviderSpec(
@@ -34,6 +39,7 @@ OPENAI = ProviderSpec(
         ModelSpec("gpt-4o", "GPT-4o"),
         ModelSpec("gpt-4o-mini", "GPT-4o mini"),
     ),
+    key_url="https://platform.openai.com/api-keys",
 )
 
 ANTHROPIC = ProviderSpec(
@@ -44,9 +50,24 @@ ANTHROPIC = ProviderSpec(
         ModelSpec("claude-sonnet-5", "Claude Sonnet 5", supports_temperature=False),
         ModelSpec("claude-haiku-4-5", "Claude Haiku 4.5"),
     ),
+    key_url="https://console.anthropic.com/settings/keys",
 )
 
-PROVIDERS: dict[str, ProviderSpec] = {p.name: p for p in (OPENAI, ANTHROPIC)}
+# Google's free tier needs no credit card. It is reached through its
+# OpenAI-compatible endpoint, so it reuses the OpenAI SDK.
+GEMINI = ProviderSpec(
+    name="Google Gemini",
+    env_var="GEMINI_API_KEY",
+    models=(
+        ModelSpec("gemini-2.5-flash", "Gemini 2.5 Flash"),
+        ModelSpec("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite"),
+    ),
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+    key_url="https://aistudio.google.com/apikey",
+    free_tier=True,
+)
+
+PROVIDERS: dict[str, ProviderSpec] = {p.name: p for p in (OPENAI, ANTHROPIC, GEMINI)}
 
 # Prompt limits: short enough to reject empty/junk input, long enough for real specs.
 MIN_PROMPT_CHARS = 15

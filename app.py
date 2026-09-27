@@ -74,7 +74,11 @@ def apply_preset(text: str) -> None:
 with st.sidebar:
     st.header("⚙️ Configuration")
 
-    provider_name = st.selectbox("LLM provider", list(PROVIDERS))
+    provider_name = st.selectbox(
+        "LLM provider",
+        list(PROVIDERS),
+        format_func=lambda name: f"{name}  (free tier)" if PROVIDERS[name].free_tier else name,
+    )
     provider = PROVIDERS[provider_name]
     model = st.selectbox(
         "Model",
@@ -114,8 +118,12 @@ with st.sidebar:
         api_key_override = st.text_input(
             "Paste a key for this session",
             type="password",
+            key=f"api_key_{provider.name}",  # one field per provider, so keys are never mixed up
             help="Used only in memory for this browser session; never written to disk.",
         )
+    if provider.key_url:
+        cost = "free, no credit card" if provider.free_tier else "paid API credit required"
+        st.caption(f"Get a {provider.name} key: [{provider.key_url}]({provider.key_url}) ({cost}).")
 
 # --------------------------------------------------------------------------- #
 # Main: input

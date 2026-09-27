@@ -163,3 +163,64 @@ def test_openai_429_quota_vs_rate_limit(code, match):
     client._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     with pytest.raises(LLMError, match=match):
         client.complete_json("sys", MESSAGES, ENVELOPE, "env")
+
+
+def test_gemini_uses_compatible_endpoint_and_max_tokens():
+    from core.config import GEMINI
+
+    client = build_client("Google Gemini", "gemini-2.5-flash", 0.2, "AIzaTestKey")
+    assert isinstance(client, OpenAIClient)
+    assert str(client._client.base_url).startswith(GEMINI.base_url.rstrip("/"))
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return _openai_response('```json\n{"a": "x"}\n```')
+
+    client._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    assert client.complete_json("sys", MESSAGES, ENVELOPE, "env") == {"a": "x"}
+    assert captured["max_tokens"] == 16000 and "max_completion_tokens" not in captured
+
+
+def _bad_request(message):
+    import httpx2
+    import openai
+
+    request = httpx2.Request("POST", "https://example.test/chat/completions")
+    return openai.BadRequestError(message, response=httpx2.Response(400, request=request), body=None)
+
+
+def test_gemini_falls_back_to_json_mode_when_schema_rejected():
+    client = build_client("Google Gemini", "gemini-2.5-flash", 0.2, "AIzaTestKey")
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        if kwargs["response_format"]["type"] == "json_schema":
+            raise _bad_request("Invalid JSON payload: unknown field 'strict'")
+        return _openai_response('{"a": "x"}')
+
+    client._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    assert client.complete_json("sys", MESSAGES, ENVELOPE, "env") == {"a": "x"}
+    assert [c["response_format"]["type"] for c in calls] == ["json_schema", "json_object"]
+    assert '"required": ["a"]' in calls[1]["messages"][0]["content"]
+
+
+def test_gemini_invalid_key_400_mapped():
+    client = build_client("Google Gemini", "gemini-2.5-flash", 0.2, "AIzaTestKey")
+
+    def create(**_):
+        raise _bad_request("API key not valid. Please pass a valid API key.")
+
+    client._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    with pytest.raises(LLMError, match="rejected the API key.*aistudio"):
+        client.complete_json("sys", MESSAGES, ENVELOPE, "env")
+
+
+@pytest.mark.parametrize(
+    "provider, model, key",
+    [("OpenAI", "gpt-4o", "AIzaTestKey"), ("Google Gemini", "gemini-2.5-flash", "sk-proj-abc")],
+)
+def test_gemini_key_mismatch(provider, model, key):
+    with pytest.raises(LLMError, match="Gemini"):
+        build_client(provider, model, 0.2, key)
