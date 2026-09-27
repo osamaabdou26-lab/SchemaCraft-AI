@@ -20,7 +20,26 @@ def test_missing_key_raises(monkeypatch):
 
 def test_override_key_used(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    assert isinstance(build_client("Anthropic", "claude-haiku-4-5", 0.2, "sk-test"), AnthropicClient)
+    assert isinstance(build_client("Anthropic", "claude-haiku-4-5", 0.2, "sk-ant-test"), AnthropicClient)
+
+
+@pytest.mark.parametrize(
+    "provider, model, key, match",
+    [
+        ("OpenAI", "gpt-4o", "sk-ant-abc123", "Anthropic \\(Claude\\) key"),
+        ("Anthropic", "claude-sonnet-5", "sk-proj-abc123", "looks like an OpenAI key"),
+        ("OpenAI", "gpt-4o", "sk-proj-abc 123", "spaces or line breaks"),
+    ],
+)
+def test_key_mismatch_detected(provider, model, key, match):
+    with pytest.raises(LLMError, match=match):
+        build_client(provider, model, 0.2, key)
+
+
+def test_quoted_key_is_unwrapped(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", '"sk-proj-abc123"')
+    client = build_client("OpenAI", "gpt-4o", 0.2)
+    assert client._client.api_key == "sk-proj-abc123"
 
 
 def test_unknown_model():

@@ -50,11 +50,28 @@ class LLMClient(Protocol):
 
 def resolve_api_key(provider: ProviderSpec, override: str | None = None) -> str:
     """Return the API key from the explicit override or the provider's env var."""
-    key = (override or "").strip() or os.environ.get(provider.env_var, "").strip()
+    raw = (override or "").strip() or os.environ.get(provider.env_var, "").strip()
+    # Keys pasted from docs or .env files often keep their surrounding quotes.
+    key = raw.strip("\"'").strip()
     if not key:
         raise MissingAPIKeyError(
             f"{provider.env_var} is not set. Export it in your shell or add it to a "
             f".env file, or paste a key in the sidebar for this session."
+        )
+    if any(ch.isspace() for ch in key):
+        raise LLMError("The API key contains spaces or line breaks. Copy it again without them.")
+
+    # Catch the most common 401 cause before any request: a key for the other provider.
+    is_anthropic_key = key.startswith("sk-ant-")
+    if provider.name == "OpenAI" and is_anthropic_key:
+        raise LLMError(
+            "This is an Anthropic (Claude) key (it starts with 'sk-ant-'). "
+            "Switch the LLM provider to Anthropic, or use an OpenAI key."
+        )
+    if provider.name == "Anthropic" and key.startswith("sk-") and not is_anthropic_key:
+        raise LLMError(
+            "This looks like an OpenAI key; Anthropic keys start with 'sk-ant-'. "
+            "Switch the LLM provider to OpenAI, or use an Anthropic key."
         )
     return key
 
