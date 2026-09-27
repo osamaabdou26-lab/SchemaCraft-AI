@@ -123,7 +123,14 @@ class OpenAIClient:
         except openai.NotFoundError as exc:
             raise LLMError(f"OpenAI model '{self._model.id}' was not found (404).") from exc
         except openai.RateLimitError as exc:
-            raise LLMError("OpenAI rate limit or quota exceeded (429). Try again shortly.") from exc
+            # OpenAI uses 429 both for "no credit" and for real rate limiting.
+            if getattr(exc, "code", None) == "insufficient_quota":
+                raise LLMError(
+                    "Your OpenAI account has no API credit (429 insufficient_quota). API usage is "
+                    "billed separately from ChatGPT: add credit at "
+                    "https://platform.openai.com/settings/organization/billing and retry."
+                ) from exc
+            raise LLMError("OpenAI rate limit exceeded (429). Wait a minute and try again.") from exc
         except openai.BadRequestError as exc:
             raise LLMError(f"OpenAI rejected the request: {exc.message}") from exc
         except openai.APITimeoutError as exc:

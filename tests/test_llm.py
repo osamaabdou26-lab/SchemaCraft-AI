@@ -141,3 +141,25 @@ def test_anthropic_auth_error_mapped():
     client._client = SimpleNamespace(messages=SimpleNamespace(create=create))
     with pytest.raises(LLMError, match="rejected the API key"):
         client.complete_json("sys", MESSAGES, ENVELOPE, "env")
+
+
+@pytest.mark.parametrize(
+    "code, match",
+    [("insufficient_quota", "no API credit"), ("rate_limit_exceeded", "Wait a minute")],
+)
+def test_openai_429_quota_vs_rate_limit(code, match):
+    import httpx2
+    import openai
+
+    client = OpenAIClient(OPENAI.models[1], 0.3, "sk-test")
+    request = httpx2.Request("POST", "https://api.openai.com/v1/chat/completions")
+    error = openai.RateLimitError(
+        "429", response=httpx2.Response(429, request=request), body={"code": code, "message": "x"}
+    )
+
+    def create(**_):
+        raise error
+
+    client._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    with pytest.raises(LLMError, match=match):
+        client.complete_json("sys", MESSAGES, ENVELOPE, "env")
