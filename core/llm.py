@@ -323,6 +323,12 @@ class AnthropicClient:
         return _parse_json_payload(text, "Anthropic")
 
 
+_MISSING_PACKAGE = (
+    "The '{package}' package is not installed in the Python that is running Streamlit. "
+    "Activate the project's environment (e.g. `conda activate schemacraft` or "
+    "`.venv\\Scripts\\Activate.ps1`) or run `pip install -r requirements.txt`, then restart the app."
+)
+
 # Model families that cannot do chat + JSON output (embeddings, media, speech...).
 _NON_CHAT_MARKERS = (
     "embedding", "image", "imagen", "veo", "tts", "audio", "live", "aqa",
@@ -367,7 +373,10 @@ def list_available_models(provider_name: str, api_key_override: str | None = Non
         return [m.id for m in provider.models]
 
     api_key = resolve_api_key(provider, api_key_override)
-    import openai
+    try:
+        import openai
+    except ImportError as exc:
+        raise LLMError(_MISSING_PACKAGE.format(package="openai")) from exc
 
     client = openai.OpenAI(api_key=api_key, base_url=provider.base_url, timeout=20.0, max_retries=1)
     try:
@@ -408,4 +417,4 @@ def build_client(
         return OpenAIClient(model, temperature, api_key, provider)
     except ImportError as exc:
         package = "anthropic" if provider.name == "Anthropic" else "openai"
-        raise LLMError(f"The '{package}' package is not installed. Run: pip install -r requirements.txt") from exc
+        raise LLMError(_MISSING_PACKAGE.format(package=package)) from exc

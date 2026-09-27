@@ -319,3 +319,22 @@ def test_overloaded_provider_gives_up_with_clear_message():
     client._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     with pytest.raises(ProviderOverloadedError, match="overloaded.*temporary.*Flash-Lite"):
         client.complete_json("sys", MESSAGES, ENVELOPE, "env")
+
+
+def test_missing_sdk_gives_clean_message(monkeypatch):
+    import builtins
+
+    from core.llm import list_available_models
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "openai":
+            raise ImportError("No module named 'openai'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(LLMError, match="pip install -r requirements.txt"):
+        list_available_models("Google Gemini", "AIzaTestKey")
+    with pytest.raises(LLMError, match="not installed"):
+        build_client("OpenAI", "gpt-4o", 0.2, "sk-proj-x")
